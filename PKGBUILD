@@ -82,9 +82,9 @@ sha256sums=('3ff25c0603d310a68d7ac7f4207e7bb2f7006b038ad312322d141b77c9164d83'
             '50b26e8afaf8b3f8e66f6b57512b794ed1bac36bcaa062a555b060fa7f3b63f5')
 
 # needed to prevent memory exhaustion, 10 seems to consume about 14.5 GiB in the build step
-#_n_parallel_build_jobs=1
+_n_parallel_build_jobs=1
 #_n_parallel_build_jobs=10  # consumes ~14.5 GiB of ram
-_n_parallel_build_jobs=30  # consumes ~30 GiB of ram
+#_n_parallel_build_jobs=30  # consumes ~30 GiB of ram
 #_n_parallel_build_jobs=60  # consumes ~34 GiB of ram
 #_n_parallel_build_jobs=$(nproc --ignore 2)
 
@@ -167,7 +167,7 @@ build() {
   cp "${srcdir}/__init__.py" .
   cp "${srcdir}/ocp_tree.py" .
   python ocp_tree.py
-  mv OCP.*.so /OCP/.
+  mv OCP.*.so OCP/.
   cd -
   
   deactivate
