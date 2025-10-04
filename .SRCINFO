@@ -46,12 +46,12 @@ pkgbase = python-ocp
 	makedepends = lief
 	makedepends = python-logzero
 	makedepends = double-conversion
-	makedepends = clang
 	makedepends = glew
 	depends = python
 	depends = opencascade
 	depends = vtk
-	depends = fmt
+	depends = gcc-libs
+	depends = glibc
 	conflicts = python-ocp-git
 	options = !lto
 	source = git+https://github.com/CadQuery/OCP.git#commit=2dd2ce8a63f1eaffebe27b1fdcb94c6bba6dc61b

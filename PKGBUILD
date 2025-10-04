@@ -10,7 +10,8 @@ depends=(
 python
 opencascade
 vtk
-fmt
+gcc-libs
+glibc
 )
 
 makedepends=(
@@ -55,14 +56,13 @@ fast_float
 lief
 python-logzero
 double-conversion
-clang
 glew
 )
 
 conflicts=(python-ocp-git)
 
 _ocp_fragment="#commit=2dd2ce8a63f1eaffebe27b1fdcb94c6bba6dc61b"
-_pywrap_commit="5e134c526b3bbd1758d8f63e518bc16c3d7ff352"  # comment this to use the latest
+#_forced_pywrap_commit="5e134c526b3bbd1758d8f63e518bc16c3d7ff352"  # comment this to use the expected commit
 source=(
   git+https://github.com/CadQuery/OCP.git${_ocp_fragment}
   git+https://github.com/CadQuery/pywrap.git
@@ -82,9 +82,9 @@ sha256sums=('3ff25c0603d310a68d7ac7f4207e7bb2f7006b038ad312322d141b77c9164d83'
             '50b26e8afaf8b3f8e66f6b57512b794ed1bac36bcaa062a555b060fa7f3b63f5')
 
 # needed to prevent memory exhaustion, 10 seems to consume about 14.5 GiB in the build step
-_n_parallel_build_jobs=1
+#_n_parallel_build_jobs=1
 #_n_parallel_build_jobs=10  # consumes ~14.5 GiB of ram
-#_n_parallel_build_jobs=30  # consumes ~30 GiB of ram
+_n_parallel_build_jobs=30  # consumes ~30 GiB of ram
 #_n_parallel_build_jobs=60  # consumes ~34 GiB of ram
 #_n_parallel_build_jobs=$(nproc --ignore 2)
 
@@ -104,21 +104,22 @@ prepare(){
   git config submodule.pywrap.url "${srcdir}"/pywrap
   git -c protocol.file.allow=always submodule update
 
-  if [[ ${_pywrap_commit} ]]; then
-    msg2 "using pywrap commit ${_pywrap_commit}"
-    git -C pywrap checkout ${_pywrap_commit}
+  if [[ ${_forced_pywrap_commit} ]]; then
+    git -C pywrap checkout "${_forced_pywrap_commit}"
   fi
 
-  sed "s,-i \${CLANG_INSTALL_PREFIX}/lib/clang/\${LLVM_VERSION}/include/,-i \"$(clang -print-resource-dir)/include\"," --in-place CMakeLists.txt
-  sed "s,-n \${N_PROC},--njobs ${_n_parallel_build_jobs}," --in-place CMakeLists.txt
-  sed "s,\${VTK_INCLUDE_DIR},/usr/include/vtk," --in-place CMakeLists.txt  # fix vtk include dir for vtk 9.4
+  msg2 "Using pywrap commit $(git -C pywrap rev-parse --short HEAD)"
 
-  # use upstream's headers, not whatever is shipped here
+  #sed "s,-i \${CLANG_INSTALL_PREFIX}/lib/clang/\${LLVM_VERSION}/include/,-i \"$(clang -print-resource-dir)/include\"," --in-place CMakeLists.txt
+  #sed "s,-n \${N_PROC},--njobs ${_n_parallel_build_jobs}," --in-place CMakeLists.txt
+  #sed "s,\${VTK_INCLUDE_DIR},/usr/include/vtk," --in-place CMakeLists.txt  # fix vtk include dir for vtk 9.4
+
+  # use system's opencascade headers, not whatever is shipped here
   rm -r opencascade
   ln -s "${_opencascade_install_prefix}"/include/opencascade .
 
   # ensure any opencascade at /usr isn't used here
-  sed 's|CONDA_PREFIX|_opencascade_install_prefix|g' -i pywrap/FindOpenCascade.cmake
+  #sed 's|CONDA_PREFIX|_opencascade_install_prefix|g' -i pywrap/FindOpenCascade.cmake
 
   cd pywrap
   cat ../../no_progress_bars.patch | patch -p1  # disable progress bars
@@ -128,6 +129,9 @@ prepare(){
 build() {
   python -m venv --without-pip --system-site-packages --clear venv
   source venv/bin/activate
+
+  # use system opencascade
+  export CONDA_PREFIX="${_opencascade_install_prefix}"
 
   cd OCP/pywrap
   python -m build --wheel --no-isolation
@@ -142,6 +146,7 @@ build() {
     -S OCP
     -G Ninja
     -W no-dev
+    -D N_PROC=${_n_parallel_build_jobs}
   )
 
   msg2 "Preparing OCP..."
@@ -163,12 +168,12 @@ build() {
   msg2 "OCP built."
 
   # hacking to address a missing _s somewhere
-  cd build_dir2
-  cp "${srcdir}/__init__.py" .
-  cp "${srcdir}/ocp_tree.py" .
-  python ocp_tree.py
-  mv OCP.*.so OCP/.
-  cd -
+  #cd build_dir2
+  #cp "${srcdir}/__init__.py" .
+  #cp "${srcdir}/ocp_tree.py" .
+  #python ocp_tree.py
+  #mv OCP.*.so OCP/.
+  #cd -
   
   deactivate
 }
@@ -182,7 +187,21 @@ check() {
   #unset "${!DRAW@}"
   #unset CASROOT
 
-  LD_DEBUG=libs PYTHONPATH="${srcdir}/build_dir2" python -c "from OCP import *; import OCP; print(OCP.__spec__)"
+  # recursively import all submodules
+  LD_DEBUG=libs PYTHONPATH="${srcdir}/build_dir2" python - <<'____HERE'
+import inspect
+import importlib
+import OCP
+def import_all_submodules(module):
+  mod_name = module.__name__
+  for submodule in inspect.getmembers(module, inspect.ismodule):
+    to_do = f'{mod_name}.{submodule[0]}'
+    imported_submod = importlib.import_module(to_do)
+    print(f"imported {imported_submod.__name__}")
+    import_all_submodules(imported_submod)
+import_all_submodules(OCP)
+print(OCP.__spec__)
+____HERE
   
   deactivate
 }
@@ -191,10 +210,8 @@ package(){
   #python -m installer --destdir="${pkgdir}" dist/*.whl
   local _pysyspath="${pkgdir}$(python -c 'import sys; print(sys.path[-1])')"
 
-  ls -al build_dir2
-
-  #install -Dt "${_pysyspath}" -m644 build_dir2/OCP.*.so
-  install -dm755 "${_pysyspath}"
-  cp -r "${srcdir}/build_dir2/OCP" "${_pysyspath}"
+  install -Dt "${_pysyspath}" -m644 build_dir2/OCP.*.so
+  #install -dm755 "${_pysyspath}"
+  #cp -r "${srcdir}/build_dir2/OCP" "${_pysyspath}"
   install -Dt "${pkgdir}/usr/share/licenses/${pkgname}" -m644 OCP/LICENSE
 }
